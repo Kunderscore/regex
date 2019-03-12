@@ -59,12 +59,13 @@ Lisp Lesser General Public License for more details.
 
 (defmacro defmatcher (name args &body body)
   `(defun ,name ,args
-     (lambda (data reg cont)
+     (let (())
+	  (lambda (data reg cont)
        (declare (ignorable data reg cont)
 		(type data data)
 		(type list reg)
 		(type function cont))
-       ,@body)))
+       ,@body))))
 
 (defmatcher re/character (c)
   (if (eql c (sar data))
