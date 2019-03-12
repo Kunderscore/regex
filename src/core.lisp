@@ -43,39 +43,43 @@ Lisp Lesser General Public License for more details.
 (declaim (inline sar))
 (defun sar (data)
   (declare (type data data))
-  (when (< (data-index data) (length (data-string data)))
+  (if (< (data-index data) (length (data-string data)))
     (let ((c (char (data-string data) (data-index data))))
       (unless (char= #\Newline c) c))))
 
 (declaim (inline sdr))
 (defun sdr (data)
   (declare (type data data))
-  (let ((d (copy-data data)))
-    (incf (data-index d)) d))
+  (incf (data-index data)))
 
 (defmacro spush (val data)
   `(setf (data-register ,data)
 	 (cons ,val (data-register ,data))))
 
-(defmacro defmatcher (name args &body body)
-  `(defun ,name ,args
-     (let (())
-	  (lambda (data reg cont)
-       (declare (ignorable data reg cont)
-		(type data data)
-		(type list reg)
-		(type function cont))
-       ,@body))))
+(defmacro defmatcher (name args body &optional &key (progress nil))
+  (let ((var (gensym "DEFMATCHER-KEY-"))
+       `(defun ,name ()
+     (let ((,var) 
+	   ,@(loop for i in args 
+		   collect (list ,i ,i))
+	  (lambda (data)
+       (declare (ignorable data)
+		(type data data))
+       (if (null ,var) 
+	   (setf ,var ,body)
+	   )
+	,(if ,var
+	    `(sdr data))
+		  )
+	   ,var)))
 
 (defmatcher re/character (c)
-  (if (eql c (sar data))
-      (funcall (car reg) (sdr data) (cdr reg) cont)
-      (funcall cont)))
+  (eql c (sar data)
+  :progress t)
 
 (defmatcher re/dot ()
-  (if (sar data)
-      (funcall (car reg) (sdr data) (cdr reg) cont)
-      (funcall cont)))
+  (sar data)
+  :progress t)
 
 (defmatcher re/repeat (n m r)
   (cond ((zerop m) (funcall (car reg) data (cdr reg) cont))
@@ -100,9 +104,7 @@ Lisp Lesser General Public License for more details.
     (funcall (car r2) data (append (cdr r2) reg) cont)))
 
 (defmatcher re/head ()
-  (if (= (data-start data) (data-index data) 0)
-      (funcall (car reg) data (cdr reg) cont)
-      (funcall cont)))
+  (= (data-start data) (data-index data) 0))
 
 (defmatcher re/tail ()
   (unless (< (data-index data) (length (data-string data)))
@@ -129,14 +131,12 @@ Lisp Lesser General Public License for more details.
       (funcall (re/group-1 r) data reg cont))))
 
 (defmatcher re/brackets (r)
-  (when (member (sar data) r)
-    (funcall (car reg) (sdr data) (cdr reg) cont))
-  (funcall cont))
+  (member (sar data) r)
+  :progress t)
 
 (defmatcher re/brackets-not (r)
-  (unless (or (not (sar data)) (member (sar data) r))
-    (funcall (car reg) (sdr data) (cdr reg) cont))
-  (funcall cont))
+  (or (not (sar data)) (member (sar data) r))
+  :progress t)
   
 (defmatcher re/ok ()
   (throw 'match
@@ -148,5 +148,7 @@ Lisp Lesser General Public License for more details.
 (defun match (reg str &optional (start 0) (end most-positive-fixnum))
   (catch 'match
     (loop :for i :from start :to (min end (length str))
-	  :for d := (make-data :string str :start i :index i) :do
-       (with-call/cc (let/cc cont (funcall (car reg) d (cdr reg) cont))))))
+	  :for d := (make-data :string str :start i :index i)
+	  :do (dolist (x reg)
+		      (if (not (funcall x d))
+			  (return))))
