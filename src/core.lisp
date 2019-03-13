@@ -13,9 +13,9 @@ Lisp Lesser General Public License for more details.
 |#
 
 (in-package :cl-user)
+
 (defpackage regex.core
   (:use :cl)
-  (:import-from :cl-cont :with-call/cc :let/cc)
   (:export
    :re/character
    :re/dot
@@ -31,19 +31,24 @@ Lisp Lesser General Public License for more details.
    :re/repeat
    :re/ref
    :re/or
-   :match))
+   :match
+   :match-all))
 (in-package :regex.core)
 
-(defstruct data
+(defstruct
+    (data
+      (:constructor create-data
+		            (string &aux (length (length string)))))
   (register nil :type list)
   (index    0   :type fixnum)
-  (start    0   :type fixnum :read-only t)
+  (start    0   :type fixnum)
+  (length   0   :type fixnum :read-only t)
   (string   ""  :type string :read-only t))
 
 (declaim (inline sar))
 (defun sar (data)
   (declare (type data data))
-  (if (< (data-index data) (length (data-string data)))
+  (when (< (data-index data) (data-length data))
     (let ((c (char (data-string data) (data-index data))))
       (unless (char= #\Newline c) c))))
 
@@ -52,29 +57,24 @@ Lisp Lesser General Public License for more details.
   (declare (type data data))
   (incf (data-index data)))
 
-(defmacro spush (val data)
-  `(setf (data-register ,data)
-	 (cons ,val (data-register ,data))))
+(defmacro push-curnt-str (data)
+  `(push (subseq (data-string ,data) (data-start ,data) (data-index ,data))
+         (data-register ,data)))
 
 (defmacro defmatcher (name args body &optional &key (progress nil))
-  (let ((var (gensym "DEFMATCHER-KEY-"))
-       `(defun ,name ()
-     (let ((,var) 
-	   ,@(loop for i in args 
-		   collect (list ,i ,i))
-	  (lambda (data)
-       (declare (ignorable data)
-		(type data data))
-       (if (null ,var) 
-	   (setf ,var ,body)
-	   )
-	,(if ,var
-	    `(sdr data))
-		  )
-	   ,var)))
+  `(defun ,name ,args
+     (lambda (data)
+         (declare (ignorable data)
+		          (type data data))
+         ,(if progress
+              `(let ((result ,body))
+                 (if result
+                     (sdr data))
+                 result)
+              `,body))))
 
 (defmatcher re/character (c)
-  (eql c (sar data)
+  (eql c (sar data))
   :progress t)
 
 (defmatcher re/dot ()
@@ -82,73 +82,91 @@ Lisp Lesser General Public License for more details.
   :progress t)
 
 (defmatcher re/repeat (n m r)
-  (cond ((zerop m) (funcall (car reg) data (cdr reg) cont))
-	((zerop n)
-	 (with-call/cc
-	   (let/cc c (funcall r data (cons (re/repeat n (1- m) r) reg) c))
-	   (funcall (car reg) data (cdr reg) cont)))
-	(t (funcall r data (cons (re/repeat (1- n) (1- m) r) reg) cont))))
+  (let ((start (data-index data)))
+    (if (and (= n 0) (= m 1))
+        (funcall r data)
+        (loop
+           :while (and
+                   (< (data-index data) (length (data-string data)))
+                   (funcall r data))))
+    (if (>= (- (data-index data) start) n)
+        t)))
 
 (defun re/question (r)
   (re/repeat 0 1 r))
 
 (defun re/star (r)
-  (re/repeat 0 most-positive-fixnum r))
+  (re/repeat 0 -1 r))
 
 (defun re/plus (r)
-  (re/repeat 1 most-positive-fixnum r))
+  (re/repeat 1 -1 r))
 
 (defmatcher re/or (r1 r2)
-  (with-call/cc
-    (let/cc c (funcall (car r1) data (append (cdr r1) reg) c))
-    (funcall (car r2) data (append (cdr r2) reg) cont)))
+  (some (lambda (regs)
+          (not (notevery (lambda (x) (funcall x data)) regs)))
+        (list r1 r2)))
 
 (defmatcher re/head ()
   (= (data-start data) (data-index data) 0))
 
 (defmatcher re/tail ()
-  (unless (< (data-index data) (length (data-string data)))
+  (unless (< (data-index data) (data-length data))
     (throw 'match
-      (values t
-	      (data-start data)
-	      (data-index data)
-	      (reverse (data-register data)))))
-  (funcall cont))
+      (values
+       (data-start data)
+       (data-index data)
+       (reverse (data-register data))))))
 
 (defmatcher re/ref (n)
-  (let* ((l (coerce (nth (1- n) (reverse (data-register data))) 'list))
-	 (r (mapcar #'re/character l)))
-    (funcall (car r) data (append (cdr r) reg) cont)))
+  (let*
+      ((str (nth (1- n) (reverse (data-register data))))
+	   (regs (map 'list #'re/character str)))
+    (every (lambda (x) (funcall x data)) regs)))
 
 (defmatcher re/group (r)
   (let ((start (data-index data)))
-    (labels ((re/group-1 (r-1)
-	       (lambda (d e c)
-		 (unless r-1
-		   (spush (subseq (data-string d) start (data-index d)) d)
-		   (funcall (car e) d (cdr e) c))
-		 (funcall (car r-1) d (cons (re/group-1 (cdr r-1)) e) c))))
-      (funcall (re/group-1 r) data reg cont))))
+    (if r
+        (if (every (lambda (x) (funcall x data)) r)
+            (push
+             (subseq (data-string data) start (data-index data))
+             (data-register data)))
+        t)))
 
-(defmatcher re/brackets (r)
-  (member (sar data) r)
+(defmatcher re/brackets (regex exclude)
+  (let ((match (position (sar data) r)))
+    (if exclude
+        (not match)
+        match))
   :progress t)
 
-(defmatcher re/brackets-not (r)
-  (or (not (sar data)) (member (sar data) r))
-  :progress t)
-  
 (defmatcher re/ok ()
   (throw 'match
-    (values t
-	    (data-start data)
-	    (data-index data)
-	    (reverse (data-register data)))))
+    (let ((start (data-start data))
+          (index (data-index data)))
+      (values
+       start
+       index
+       (reverse (data-register data))
+       (subseq (data-string data) start index)))))
 
-(defun match (reg str &optional (start 0) (end most-positive-fixnum))
+(defun match (reg str start &optional &key (end most-positive-fixnum) data)
+  (if (not (data-p data))
+      (setf data (create-data str)))
   (catch 'match
-    (loop :for i :from start :to (min end (length str))
-	  :for d := (make-data :string str :start i :index i)
-	  :do (dolist (x reg)
-		      (if (not (funcall x d))
-			  (return))))
+    (loop
+       :for i :from start :to (min end (data-length data))
+       :do (setf (data-start data) i
+                 (data-index data) i)
+       :do
+         (loop :named check-loop
+            :for r in reg
+            :unless (funcall r data)
+            :do (return-from check-loop)))))
+
+(defun match-all (reg str)
+  (loop :with data = (create-data str)
+     :for start = 0 :then (second values)
+     :for values = (multiple-value-list (match reg str start :data data))
+     :while (first values)
+     :collect values
+     :do (setf (data-register data) nil)))
