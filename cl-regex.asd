@@ -12,17 +12,19 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 Lisp Lesser General Public License for more details.
 |#
 (in-package :cl-user)
-(defpackage :regex-asd
+
+(defpackage :cl-regex-asd
   (:use :cl :asdf))
-(in-package :regex-asd)
-(defsystem :regex
+
+(in-package :cl-regex-asd)
+
+(defsystem :cl-regex
   :version "0.0.1"
   :description "regular expression library"
   :author "asciian"
-  :license "LLGPL"
-  :depends-on (:cl-cont)
   :components ((:module "src"
-		:components 
-		((:file "regex" :depends-on ("parser" "core"))
-		 (:file "parser" :depends-on ("core"))
-		 (:file "core")))))
+		                :components
+		                ((:file "regex" :depends-on ("parser" "core"))
+		                 (:file "parser" :depends-on ("core"))
+		                 (:file "core")
+                         (:file "test")))))
