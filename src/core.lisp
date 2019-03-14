@@ -132,8 +132,8 @@ Lisp Lesser General Public License for more details.
              (data-register data)))
         t)))
 
-(defmatcher re/brackets (regex exclude)
-  (let ((match (position (sar data) r)))
+(defmatcher re/brackets (regex &optional (exclude nil))
+  (let ((match (position (sar data) regex)))
     (if exclude
         (not match)
         match))
@@ -158,6 +158,7 @@ Lisp Lesser General Public License for more details.
        :do (setf (data-start data) i
                  (data-index data) i)
        :do
+         ;; (every (lambda (r) (funcall r data)) reg)
          (loop :named check-loop
             :for r in reg
             :unless (funcall r data)

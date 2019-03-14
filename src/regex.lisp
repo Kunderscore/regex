@@ -15,9 +15,9 @@ Lisp Lesser General Public License for more details.
 (defpackage regex
   (:use :cl)
   (:nicknames :re)
-  (:import-from :regex.core :match)
+  (:import-from :regex.core :match :match-all)
   (:import-from :regex.parser :parse)
-  (:export :scan :regex-replace :compile-regex))
+  (:export :scan :scan-all :regex-replace :compile-regex :regex-re))
 (in-package :regex)
 
 (defstruct (regex
@@ -25,23 +25,28 @@ Lisp Lesser General Public License for more details.
 		(string &aux (re (parse string)))))
   string re)
 
-(defun scan (regex target)
+(defun scan (regex target &optional (start 0) (end most-positive-fixnum))
   (if (regex-p regex)
-      (match (regex-re regex) target)
-      (match (parse regex) target)))
+      (match (regex-re regex) target start :end end)
+      (match (parse regex) target start :end end)))
+
+(defun scan-all (regex target)
+  (if (regex-p regex)
+      (match-all (regex-re regex) target)
+      (match-all (parse regex) target)))
 
 (defun regex-replace (regex target replacement &key global)
   (multiple-value-bind (bool start end ls) (scan regex target)
     (unless bool (return-from regex-replace target))
     (concatenate 'string
-      (subseq target 0 start)
-      (if ls
-	  (loop
-	    :repeat (length ls) :for i :from 1
-	    :for ret := (regex-replace "\\\\1" replacement (nth 0 ls) :global t)
-	      :then (regex-replace (format nil "\\\\~d" i) ret (nth (1- i) ls) :global t)
-	    :finally (return ret))
-	  replacement)
-      (if global
-	  (regex-replace regex (subseq target end) replacement :global t)
-	  (subseq target end)))))
+                 (subseq target 0 start)
+                 (if ls
+	                 (loop
+	                    :repeat (length ls) :for i :from 1
+	                    :for ret := (regex-replace "\\\\1" replacement (nth 0 ls) :global t)
+	                    :then (regex-replace (format nil "\\\\~d" i) ret (nth (1- i) ls) :global t)
+	                    :finally (return ret))
+	                 replacement)
+                 (if global
+	                 (regex-replace regex (subseq target end) replacement :global t)
+	                 (subseq target end)))))
